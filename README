@@ -1,0 +1,3 @@
+Symplectic Elements HR Data Feeder
+
+This project collects HR records from Faculty Data Repository and the Service Directory, performs deduplication and some data integrity tasks, and serializes the records to XML to populate the user table in Symplectic Elements.
