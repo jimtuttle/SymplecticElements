@@ -13,39 +13,35 @@ from os import getcwd, environ
 from sys import exit
 from djangoutil.xmlrpc import getServerProxy
 from xml.sax.saxutils import escape
-
+from ConfigParser import SafeConfigParser
 import codecs
 import io
-
+from django.conf import settings
+from djangoutil import config
+settings.configure(config)
 # encoding=utf8
 import sys
 reload(sys)
 sys.setdefaultencoding('utf8')
-
-
-from django.conf import settings
-from djangoutil import config
-settings.configure(config)
-
-
 # set to UTF-8 to capture diacritics
 environ['NLS_LANG']= 'AMERICAN_AMERICA.AL32UTF8'
 
+
+
+# database configuration
+usedb = 'test' # choose database: dev, test, or prod
+config = SafeConfigParser()
+config.read(join(getcwd(), 'fdr.config')) # read config file to gather parameters
+dbhost = config.get(usedb, 'dbhost')
+dbport = config.get(usedb, 'dbport')
+dbsid = config.get(usedb, 'dbsid')
+dbuser = config.get(usedb, 'dbuser')
+dbpassword = config.get(usedb, 'dbpassword')
 
 useldapforemail = False  # LDAP is slow and hasn't returned significant number of emails. If False, use netid+@duke.edu instead.
 sd_file = join(getcwd(), 'libsymel.dat') # Nightly export of Service Directory data
 xmlfile = join(getcwd(), 'people.xml') # Output file for Symplectic Elements consumption
 affiliationsfile = join(getcwd(), 'affiliations.txt') # Output file for unique affiliations to populate Elements Auto Groups
-
-# set text encoding to UTF-8 to capture diacritics and whatnot
-environ['NLS_LANG']= 'AMERICAN_AMERICA.AL32UTF8'
-
-# FDR database specifics
-dbhost = 'fdrprd-db.oit.duke.edu'
-dbport = '1637'
-dbsid = 'FDRPRD'
-dbuser = 'libacct'
-dbpassword = 'uanbahd10'
 
 # instantiate and configure logger
 logfile = join(getcwd(), 'hrDataFeeder.log')
@@ -66,70 +62,80 @@ def getResults(ora, sql):
 
 # Take list of dictionaries and build XML elements.  Return string.
 def buildXml(list):
-    sequence_dict = {1:'Secondary', 2:'Tertiary', 3:'Quaternary', 4:'Quinary', 5:u'Senary', 6:u'Septenary', 7:u'Octonary', 8:u'Nonary', 9:u'Denary'}
-    xml = u''
+    sequence_dict = {1:'Secondary', 2:'Tertiary', 3:'Quaternary', 4:'Quinary', 5:'Senary', 6:'Septenary', 7:'Octonary', 8:'Nonary', 9:'Denary'}
+    xml = ''
     for record in list:
-        xml += u'\t\t<person>\n'
-        xml += u'\t\t\t<Lastname>%s</Lastname>\n' % (record[u'surname'])
-        xml += u'\t\t\t<Firstname>%s</Firstname>\n' % (record[u'forename'])
+        xml += '\t\t<person>\n'
+        xml += '\t\t\t<Lastname>%s</Lastname>\n' % (record['surname'])
+        xml += '\t\t\t<Firstname>%s</Firstname>\n' % (record['forename'])
         try:
-            xml += u'\t\t\t<Middlename>%s</Middlename>\n' % (record[u'middlename'])
+            xml += '\t\t\t<Middlename>%s</Middlename>\n' % (record['middlename'])
         except:
             pass
-        xml += u'\t\t\t<Email>%s</Email>\n' % (record['email'])  # removing angle brackets in some email fields
-        xml += u'\t\t\t<Proprietary_ID>%s</Proprietary_ID>\n' % (record[u'duid'])
-        xml += u'\t\t\t<Username>%s</Username>\n' % (record[u'netid'])
-        xml += u'\t\t\t<PrimaryGroupDescriptor>%s</PrimaryGroupDescriptor>\n' % (escape(record[u'primary']))
+        xml += '\t\t\t<Email>%s</Email>\n' % (record['email'])  # removing angle brackets in some email fields
+        xml += '\t\t\t<Proprietary_ID>%s</Proprietary_ID>\n' % (record['duid'])
+        xml += '\t\t\t<Username>%s</Username>\n' % (record['netid'])
+        xml += '\t\t\t<PrimaryGroupDescriptor>%s</PrimaryGroupDescriptor>\n' % (escape(record['primary']))
         # this must change in response to addition of school
         if 'secondary' in record:
-            if len(record[u'secondary']) > 0:
+            if len(record['secondary']) > 0:
                 i = 1
-                for appointment in record[u'secondary']:
-                    xml += u'\t\t\t<%sGroupDescriptor>%s</%sGroupDescriptor>\n' % (sequence_dict[i], escape(appointment.strip()), sequence_dict[i])
+                for appointment in record['secondary']:
+                    xml += '\t\t\t<%sGroupDescriptor>%s</%sGroupDescriptor>\n' % (sequence_dict[i], escape(appointment.strip()), sequence_dict[i])
                     i += 1
-        xml += u'\t\t\t<IsAcademic>%s</IsAcademic>\n' % (record[u'academic'])
-        xml += u'\t\t\t<LoginAllowed>%s</LoginAllowed>\n' % (record[u'login'])
-        xml += u'\t\t\t<AuthenticatingAuthority>%s</AuthenticatingAuthority>\n' % (record[u'authority'])
-        xml += u'\t\t</person>\n'
+        xml += '\t\t\t<IsAcademic>%s</IsAcademic>\n' % (record['academic'])
+        xml += '\t\t\t<LoginAllowed>%s</LoginAllowed>\n' % (record['login'])
+        xml += '\t\t\t<AuthenticatingAuthority>%s</AuthenticatingAuthority>\n' % (record['authority'])
+        xml += '\t\t</person>\n'
     return xml
 
 
 # Build list of dictionaries of FDR people. Also return list of Duke Unique IDs.
 def buildFdrDict(data, rpcserver, sd_dict_list):
+    print 'buildFdrDict'
     fdr_dict_list = []
-    duid_list = []
+    # CHANGE THIS.  DROP FDR RECORD WITHOUT NETID, USE NETID as KEY
+    netid_list = []
     missing_fdr_email = 0
     missing_email_found_sd = 0
     for record in data:
         drop_record = False
         fdr_dict = {}
         try: # Confusing. FDR forced their names on us. Their PRIMARY_SCHOOL is our primary group, all other groups are secondary for us.
-            duid, netid, salutation, surname, forename, middlename, lsurname, lforename, lmiddlename, email, primary, school, secondary = record
+            duid, netid, salutation, surname, forename, middlename, lsurname, lforename, lmiddlename, email, primary, school, secondary,  primary_affiliation = record
         except ValueError:
             logmessage = 'Database view has changed.'
             logger.critical(logmessage)
             exit()
         if not netid: # Some people records do not contain netid. Look in SD file. If not there, log and discard person.
-            print 'missing netid for ' + duid + ' ' + forename + ' ' + surname
-            for person in sd_dict_list:  # Look through SD records
-                if duid == person['duid']:  # If DUID matches...
-                    print person
-                    netid = person['netid']   # Assign SD netid to person
-                    logmessage = "Found FDR person %s missing netid." % (duid)
-                    logger.info(logmessage)
-                    print logmessage
-                    break
-            else:  # If also no netid in SD, log and set flag to drop this record.
-                logmessage = "Person %s missing netid in FDR and SD." % (duid)
-                logger.critical(logmessage)
-                print logmessage
-                drop_record = True
+            logmessage = 'Record dropped - No NetID in FDR. %s %s, %s' % (forename, surname, duid)
+            logger.critical(logmessage)
+            print logmessage
+            drop_record = True
+            continue
+        else:
+            pass
+
+            # for person in sd_dict_list:  # Look through SD records
+            #     if duid == person['duid']:  # If DUID matches...
+            #         print person
+            #         netid = person['netid']   # Assign SD netid to person
+            #         logmessage = "Found FDR person %s missing netid." % (duid)
+            #         logger.info(logmessage)
+            #         print logmessage
+            #         break
+            # else:  # If also no netid in SD, log and set flag to drop this record.
+            #     logmessage = "Person %s missing netid in FDR and SD." % (duid)
+            #     logger.critical(logmessage)
+            #     print logmessage
+            #     drop_record = True
+
         if surname: # If professional name set, use that. Otherwise fall back to legal name.
             fdr_dict['surname'] = surname
             fdr_dict['forename'] = forename
             if middlename: # Many records do not contain middle name.
                 fdr_dict['middlename'] = middlename
-        else: # Legal name block.
+        else: # Legal name block
             fdr_dict['surname'] = lsurname
             fdr_dict['forename'] = lforename
             if lmiddlename:
@@ -142,9 +148,8 @@ def buildFdrDict(data, rpcserver, sd_dict_list):
                         email = person['email']   # Assign SD netid to person
                         logmessage = "FDR person %s missing email found in Service Directory." % (duid)
                         missing_email_found_sd += 1
-                        print logmessage
+                        #print logmessage
                         #logger.info(logmessage)
-                        print logmessage
                         break
             else:
                     email = person['email']
@@ -171,7 +176,7 @@ def buildFdrDict(data, rpcserver, sd_dict_list):
         fdr_dict['academic'] = 'Y'
         fdr_dict['login'] = 'Y'
         fdr_dict['authority'] = 'Shibboleth'
-        duid_list.append(duid)
+        netid_list.append(netid)
         if not drop_record:
             fdr_dict_list.append(fdr_dict)
         else: # Discard this record and log.
@@ -181,7 +186,7 @@ def buildFdrDict(data, rpcserver, sd_dict_list):
         logmessage = '%s FDR records without email addresses' % (missing_fdr_email)
         logger.info(logmessage)
         print '%s people missing FDR email found in SD' % (missing_email_found_sd)
-    return fdr_dict_list, duid_list
+    return fdr_dict_list, netid_list
 
 
 # Build list of dictionaries of service directory entries after deduplicating people from FDR
@@ -190,39 +195,41 @@ def buildSdDict(sd_file):
     duplicates = 0
     sd_missing_email = 0
     sd = open(sd_file, 'r')
+    print '1'
     for line in sd:
         sd_dict = {}
         duid , netid, surname, forename, email, status = line.split('|')
-        sd_dict[u'duid'] = duid
-        sd_dict[u'netid'] = netid
-        sd_dict[u'surname'] = surname
-        sd_dict[u'forename'] = forename
-        sd_dict[u'primary'] = status.strip() # Remove line break
-        sd_dict[u'academic'] = u'N'
-        sd_dict[u'login'] = u'Y'
-        sd_dict[u'authority'] = u'Shibboleth'
+        sd_dict['duid'] = duid
+        sd_dict['netid'] = netid
+        sd_dict['surname'] = surname
+        sd_dict['forename'] = forename
+        sd_dict['primary'] = status.strip() # Remove line break
+        sd_dict['academic'] = 'N'
+        sd_dict['login'] = 'Y'
+        sd_dict['authority'] = 'Shibboleth'
         if email:
             email = email.translate(None, "<>") # Remove angle brackets present in some email fields
-            sd_dict[u'email'] = email
+            sd_dict['email'] = email
         else:
-            sd_dict[u'email'] = netid + u'@duke.edu'
+            sd_dict['email'] = netid + '@duke.edu'
             sd_missing_email += 1
         sd_dict_list.append(sd_dict)
     sd.close()
-    logmessage = u'Found %s Service Directory records.' % (len(sd_dict_list) + duplicates)
+    logmessage = 'Found %s Service Directory records.' % (len(sd_dict_list) + duplicates)
     logger.info(logmessage)
-    logmessage = u'%s Service Directory records without email addresses' % (sd_missing_email)
+    logmessage = '%s Service Directory records without email addresses' % (sd_missing_email)
     logger.info(logmessage)
     #logmessage = '%s Service Directory records were duplicates.' % (duplicates)
     #logger.info(logmessage)
+    print 'testing" return buildDdDict'
     return sd_dict_list
 
 # Deduplicate the SD people to prevent creating multiple accounts as some will appear in FDR data.
-def dedupeSdDictList(sd_dict_list, duid_list):
+def dedupeSdDictList(sd_dict_list, netid_list):
     duplicates = 0
     sd_dict_list_dedupe = []
     for record in sd_dict_list:
-         if record['duid'] not in duid_list: # Deduplicate these records against FDR records.
+         if record['netid'] not in netid_list: # Deduplicate these records against FDR records.
             sd_dict_list_dedupe.append(record)
             duplicates += 1
     logmessage = "Found %s Service record duplicates." % (duplicates)
@@ -235,11 +242,10 @@ def getUniqueAffiliations(fdr_dict_list):
     unique_affiliations_list = []
     for dict in fdr_dict_list:
         if 'secondary' in dict:
-            for affiliation in dict[u'secondary']:
+            for affiliation in dict['secondary']:
                 if affiliation not in unique_affiliations_list:
                     unique_affiliations_list.append(affiliation)
     return unique_affiliations_list
-
 
 
 
@@ -254,38 +260,36 @@ if __name__=='__main__':
             logmessage = 'Database connection error.'
             logger.critical(logmessage)
             exit()
-        sql = 'select DUID, NETID, SALUTATION, SURNAME, FIRSTNAME, MIDDLENAME, LEGAL_SURNAME, LEGAL_FIRSTNAME, LEGAL_MIDDLENAME, EMAIL, PRIMARY_VIVO_ORG, PRIMARY_SCHOOL, affiliations from  APT.V_PEOPLE_WITH_AFFILIATIONS'
+        sql = 'select DUID, NETID, SALUTATION, SURNAME, FIRSTNAME, MIDDLENAME, LEGAL_SURNAME, LEGAL_FIRSTNAME, LEGAL_MIDDLENAME, EMAIL, PRIMARY_VIVO_ORG, PRIMARY_SCHOOL, affiliations, PRIMARY_AFFILIATION from  APT.V_PEOPLE_WITH_AFFILIATIONS'
         data = getResults(ora, sql)  # Query FDR. data is a list of tuples, 1 tuple per record.
         logmessage = 'Found %s FDR faculty.' % (len(data))
         logger.info(logmessage)
         ora.close()
-	print '1'
         xml_preabmle = '<?xml version="1.0" encoding="UTF-8" ?>\n<HR_Data>\n'  # Begin the XML string to write to people.xml
         xml_preabmle += '\t<Feed_ID>FDR</Feed_ID>\n'
         xml_preabmle += '\t<people>\n'
-	print '2'
-        rpcserver = getServerProxy()  # Open connection to Service Directory
+        if useldapforemail:
+            rpcserver = getServerProxy()  # Open connection to Service Directory
+        else:
+            rpcserver = False
         sd_dict_list = buildSdDict(sd_file)  #  Build list of attributes about people from Service Directory dump file.
-	print '3'
-        fdr_dict_list, duid_list = buildFdrDict(data, rpcserver, sd_dict_list)
+        fdr_dict_list, netid_list = buildFdrDict(data, rpcserver, sd_dict_list)
+
         unique_affiliations_list = getUniqueAffiliations(fdr_dict_list) # Build list of unique affiliations/appointments for Elements
-        duid_list.sort()
-        sd_dict_list_dedupe = dedupeSdDictList(sd_dict_list, duid_list)  # Deduplicate Service Directory people so we don't name people twice
+        netid_list.sort()
+
+        sd_dict_list_dedupe = dedupeSdDictList(sd_dict_list, netid_list)  # Deduplicate Service Directory people so we don't name people twice
+        # TESTED TO HERE
         sd_xml = buildXml(sd_dict_list_dedupe)  # Build the XML string from SD people
+        print 'testing buildXML sd dict'
         fdr_xml = buildXml(fdr_dict_list)  # Build the XML string for FDR people
+        print 'testing buildXML fdr dict'
         xml_postamble =  '\t</people>\n</HR_Data>'
         xml = xml_preabmle + fdr_xml + sd_xml + xml_postamble  # Complete XML string.
-        print 'here'
-        print type(xml)
-        # testing utf-8
-        with io.open(xmlfile,'w', encoding='utf8') as f:
-            f.write(xml)
-        print 'here2'
+
+        f = open(xmlfile, 'w')  # Serialize the XML string
+        f.write(xml)
         f.close()
-        print 'here3'
-        #f = open(xmlfile, 'w')  # Serialize the XML string
-        #f.write(xml)
-        #f.close()
 
         af = open(affiliationsfile, 'w') # Serialize the unique affiliations
         unique_affiliations_list.sort
@@ -295,12 +299,14 @@ if __name__=='__main__':
         logmessage = "Update complete."
         print logmessage
         logger.info(logmessage)
-    except:
+
+    except Exception as e:
+        print (e)
         # successful sending of email necessitated disabling McAfee email rule
         import smtplib
         from email.mime.text import MIMEText
-        msg = MIMEText('The HR data serialization script has failed on Elements production.')
-        sender = 'elements@duke.edu'
+        msg = MIMEText('The HR data serialization script has failed on lib-symeldata.')
+        sender = 'jjim.tuttle@duke.edu'
         recipient = 'elements@duke.edu'
         msg['Subject'] = 'HR data failed on Elements development'
         msg['From'] = 'jim.tuttle@duke.edu'
