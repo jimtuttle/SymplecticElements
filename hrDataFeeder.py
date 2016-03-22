@@ -249,6 +249,7 @@ def getUniqueAffiliations(fdr_dict_list):
 
 
 
+
 if __name__=='__main__':
     try:
         logmessage = "Starting update." # Begin logging
